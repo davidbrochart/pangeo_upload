@@ -35,7 +35,10 @@ def download_files(dt, date_nb):
         month = str(t.month).zfill(2)
         day = str(t.day).zfill(2)
         hour = str(t.hour).zfill(2)
-        filename = f'3B42RT.{year}{month}{day}{hour}.7R2.bin.gz'
+        if t < datetime(2012, 11, 7, 6):
+            filename = f'3B42RT.{year}{month}{day}{hour}.7R2.bin.gz'
+        else:
+            filename = f'3B42RT.{year}{month}{day}{hour}.7.bin.gz'
         urls.append(f'ftp://trmmopen.gsfc.nasa.gov/pub/merged/3B42RT/{year}/{month}/{filename}')
         filenames.append(filename)
     with open('tmp/trmm_list.txt', 'w') as f:
@@ -59,7 +62,7 @@ while dt < dt1:
                 waiting = True
             time.sleep(0.2)
         elif return_code != 0:
-            time.sleep(1800) # 30 minutes
+            time.sleep(3600*3) # 3 hours
             p, _, _, _ = download_files(download_from_dt, date_nb)
         else:
             done = True
@@ -111,5 +114,5 @@ while dt < dt1:
         subprocess.check_call('gsutil -m cp -r trmm_3b42rt/ gs://pangeo-data/'.split())
         #subprocess.check_call('cp -r trmm_3b42rt/ trmm_bucket/'.split())
     dt, filenames, datetimes = next_dt, next_filenames, next_datetimes
-with open('tmp/dt_trmm.pkl', 'wb') as f:
-    pickle.dump(dt1, f)
+    with open('tmp/dt_trmm.pkl', 'wb') as f:
+        pickle.dump(dt, f)

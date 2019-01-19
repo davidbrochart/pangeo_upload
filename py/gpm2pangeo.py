@@ -108,5 +108,5 @@ while dt < dt1:
         subprocess.check_call('gsutil -m cp -r gpm_imerg_early/ gs://pangeo-data/'.split())
         #subprocess.check_call('cp -r gpm_imerg_early/ gpm_bucket/'.split())
     dt, filenames, datetimes = next_dt, next_filenames, next_datetimes
-with open('tmp/dt_gpm.pkl', 'wb') as f:
-    pickle.dump(dt1, f)
+    with open('tmp/dt_gpm.pkl', 'wb') as f:
+        pickle.dump(dt, f)
