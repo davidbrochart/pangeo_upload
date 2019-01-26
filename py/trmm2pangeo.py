@@ -14,7 +14,7 @@ import pickle
 # dt1 is the date up to which you want to upload (excluded), and has to be increased between uploads.
 
 dt0 = datetime(2000, 3, 1) # DO NOT CHANGE (must stay constant between uploads)
-dt1 = datetime(2019, 1, 1) # upload up to this date (excluded)
+dt1 = datetime(2014, 4, 26) # upload up to this date (excluded)
 resume_upload = False
 
 if resume_upload:

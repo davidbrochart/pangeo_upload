@@ -35,6 +35,8 @@ for tile in tqdm(tiles):
     x1 = 6000 - int(round(((lon + 5) - (geo[0] + geo[1] * xSize)) / geo[1]))
     array_5x5[y0:y1, x0:x1] = a
 
+    geo[3] = lat
+    geo[0] = lon
     driver = gdal.GetDriverByName('GTiff')
     ds = driver.Create(tif, 6000, 6000, 1, gdal.GDT_Byte, ['COMPRESS=LZW'])
     ds.SetGeoTransform(geo)
@@ -49,5 +51,5 @@ for tile in tqdm(tiles):
 # sed -i 's/relativeToVRT="1">/relativeToVRT="1">\/vsigs\/pangeo-data\/hydrosheds\//g' acc.vrt
 # sed -i 's/relativeToVRT="1">/relativeToVRT="1">\/vsigs\/pangeo-data\/hydrosheds\//g' dir.vrt
 # cd ..
-# mv tiles hydrosheds_3sec
-# gsutil -m cp -r hydrosheds_3sec gs://pangeo-data/
+# mv tiles hydrosheds
+# gsutil -m cp -r hydrosheds gs://pangeo-data/
