@@ -35,7 +35,6 @@ for d in array_dims:
         coord[d] = np.arange(vmax[d], vmin[d]-tolerance, -pix_deg)
 nlat = int(round((coord['lat'][0] - coord['lat'][-1]) / pix_deg)) + 1
 nlon = int(round((coord['lon'][-1] - coord['lon'][0]) / pix_deg)) + 1
-n = 2
 for label in tqdm(arrays):
     da = arrays[label]
     a = np.zeros((nlat, nlon), dtype=np.uint8)
