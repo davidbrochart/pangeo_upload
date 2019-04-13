@@ -264,4 +264,4 @@ store. It actually serves two purposes:
 - for data that is produced continuously, we hacked around the Zarr data store
   format to efficiently append to an existing dataset.
 - for data that is bigger than your hard drive, we only stage a part of the
-  dataset locally and have the cloud store the totallity.
+  dataset locally and have the cloud store the totality.
