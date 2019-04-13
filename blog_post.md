@@ -191,6 +191,10 @@ corrupting the archive. We can then append to the "empty" Zarr (but still valid
 and appearing to contain the previous dataset), and upload only the necessary
 files to the cloud.
 
+One thing to keep in mind is that some coordinates (here lat and lon) won't be
+affected by the append operation. Only the time coordinate and the DataArray
+which depends on the time dimension (here precipitation) need to be extended.
+
 ```python
 import os
 
