@@ -14,7 +14,7 @@ import pickle
 # set environment variable GPM_LOGIN
 
 dt0 = datetime(2014, 3, 12) # DO NOT CHANGE (must stay constant between uploads)
-dt1 = datetime(2019, 1, 1) # upload up to this date (excluded)
+dt1 = datetime(2019, 4, 1) # upload up to this date (excluded)
 resume_upload = False
 
 if resume_upload:
@@ -48,7 +48,7 @@ def download_files(dt, date_nb):
         filenames.append(filename)
     with open('tmp/gpm_list.txt', 'w') as f:
         f.write('\n'.join(urls))
-    p = subprocess.Popen(f'aria2c -x {date_nb} -i tmp/gpm_list.txt -d tmp/gpm_data --ftp-user={login} --ftp-passwd={login} --continue=true'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    p = subprocess.Popen(f'aria2c -x 4 -i tmp/gpm_list.txt -d tmp/gpm_data --ftp-user={login} --ftp-passwd={login} --continue=true'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return p, filenames, datetimes, dt
 
 first_time = True
@@ -104,6 +104,7 @@ while dt < dt1:
         subprocess.check_call('gsutil -m cp -r gpm_imerg_early/ gs://pangeo-data/'.split())
         #subprocess.check_call('cp -r gpm_imerg_early/* gpm_bucket/', shell=True)
     else:
+        ds = ds.chunk({'time': 4, 'lat': 1800, 'lon': 3600})
         ds.to_zarr('gpm_imerg_early')
         subprocess.check_call('gsutil -m cp -r gpm_imerg_early/ gs://pangeo-data/'.split())
         #subprocess.check_call('cp -r gpm_imerg_early/ gpm_bucket/'.split())

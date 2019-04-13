@@ -13,8 +13,9 @@ import pickle
 # dt0 is the initial date of the dataset and must remain constant between uploads.
 # dt1 is the date up to which you want to upload (excluded), and has to be increased between uploads.
 
-dt0 = datetime(2000, 3, 1) # DO NOT CHANGE (must stay constant between uploads)
-dt1 = datetime(2014, 4, 26) # upload up to this date (excluded)
+dt0 = datetime(2000, 3, 1, 12) # DO NOT CHANGE (must stay constant between uploads)
+#dt1 = datetime(2014, 4, 26, 0) # upload up to this date (excluded)
+dt1 = datetime(2014, 4, 22, 12) # upload up to this date (excluded)
 resume_upload = False
 
 if resume_upload:
@@ -23,7 +24,7 @@ if resume_upload:
 else:
     dt = dt0
     shutil.rmtree('trmm_3b42rt', ignore_errors=True)
-date_nb = 4
+date_nb = 40
 shutil.rmtree('tmp/trmm_data', ignore_errors=True)
 shutil.rmtree('tmp/trmm_new', ignore_errors=True)
 os.makedirs('tmp/trmm_data', exist_ok=True)
@@ -43,7 +44,7 @@ def download_files(dt, date_nb):
         filenames.append(filename)
     with open('tmp/trmm_list.txt', 'w') as f:
         f.write('\n'.join(urls))
-    p = subprocess.Popen(f'aria2c -x {date_nb} -i tmp/trmm_list.txt -d tmp/trmm_data --continue=true'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    p = subprocess.Popen(f'aria2c -x 4 -i tmp/trmm_list.txt -d tmp/trmm_data --continue=true'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return p, filenames, datetimes, dt
 
 first_time = True
@@ -62,6 +63,7 @@ while dt < dt1:
                 waiting = True
             time.sleep(0.2)
         elif return_code != 0:
+            print('Waiting for 3 hours...')
             time.sleep(3600*3) # 3 hours
             p, _, _, _ = download_files(download_from_dt, date_nb)
         else:
@@ -110,6 +112,7 @@ while dt < dt1:
         subprocess.check_call('gsutil -m cp -r trmm_3b42rt/ gs://pangeo-data/'.split())
         #subprocess.check_call('cp -r trmm_3b42rt/* trmm_bucket/', shell=True)
     else:
+        ds = ds.chunk({'time': 40, 'lat': 480, 'lon': 1440})
         ds.to_zarr('trmm_3b42rt')
         subprocess.check_call('gsutil -m cp -r trmm_3b42rt/ gs://pangeo-data/'.split())
         #subprocess.check_call('cp -r trmm_3b42rt/ trmm_bucket/'.split())
