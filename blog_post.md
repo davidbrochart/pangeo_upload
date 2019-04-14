@@ -21,13 +21,14 @@ issue. Recent improvements to Xarray will also ease this process.
 
 Let's take [TRMM 3B42RT](ftp://trmmopen.gsfc.nasa.gov/pub/merged/3B42RT) as an
 example dataset (near real time, satellite-based precipitation estimates from
-NASA). It's a good example of a rather obscure binary format, hidden behind a
-raw FTP server. The first step is to download the data.
+NASA). It is a precipitation array ranging from latitudes 60°N-S with resolution
+0.25°, 3-hour, from March 2000 to present.  It's a good example of a rather
+obscure binary format, hidden behind a raw FTP server.
 
 Files are organized on the server in a particular way that is specific to this
 dataset, so we must have some prior knowledge of the directory structure in
-order to fetch them. The following function uses the aria2 download utility to
-download files in parallel.
+order to fetch them. The following function uses the aria2 utility to download
+files in parallel.
 
 ```python
 from datetime import datetime, timedelta
@@ -194,22 +195,29 @@ files to the cloud.
 One thing to keep in mind is that some coordinates (here lat and lon) won't be
 affected by the append operation. Only the time coordinate and the DataArray
 which depends on the time dimension (here precipitation) need to be extended.
+Also, we can see that there will be a problem with the time coordinate: its
+chunks will have a size of 40. That was the intention for the precipitation
+variable, but because the time variable is a 1-D array, it will be much too
+small. So we empty the time variable of its data for now, and it will be
+uploaded later with the right chunks.
 
 ```python
 import os
+import zarr
 
-def empty_zarr(name):
+def empty_zarr(name, variable=None):
     '''Empty the Zarr archive of its data (but not its metadata).
 
     Arguments:
         - name: the name of the archive.
+        - variable: the name of the variable to empty (if None, empty all
+          variables)
     '''
     for dname in [f for f in os.listdir(name) if not f.startswith('.')]:
-        for fname in [f for f in os.listdir(f'{name}/{dname}')
-                      if not f.startswith('.')]:
-            os.remove(f'{name}/{dname}/{fname}')
-
-import zarr
+        if variable is not None and dname == variable:
+            for fname in [f for f in os.listdir(f'{name}/{dname}')
+                          if not f.startswith('.')]:
+                os.remove(f'{name}/{dname}/{fname}')
 
 def append_zarr(src_name, dst_name):
     '''Append a Zarr archive to another one.
@@ -222,28 +230,44 @@ def append_zarr(src_name, dst_name):
     zarr_dst = zarr.open(dst_name, mode='a')
     for key in [k for k in zarr_src.array_keys() if k not in ['lat', 'lon']]:
         zarr_dst[key].append(zarr_src[key])
+    empty_zarr('trmm_3b42rt', 'time')
 ```
 
 ## Repeat
 
 Now that we have all the pieces, it is just a matter of putting them together in
-a loop. The following code allows to resume an upload, so that you can wait for
+a loop. We take care of the time coordinate by uploading in one chunk at the
+end.
+
+The following code allows to resume an upload, so that you can wait for
 new data to appear on the FTP server and launch the script again:
 
 ```python
+import gcsfs
+import pandas as pd
+
 dt0 = dt = datetime(2000, 3, 1, 12) # from this date (included)
-dt1 = datetime(2014, 4, 22, 12)     # to that date (excluded)
-time_nb = 40
+dt1 = datetime(2000, 3, 11, 12)     # to that date (excluded)
+#dt0 = dt = datetime(2000, 3, 11, 12) # from this date (included)
+#dt1 = datetime(2000, 3, 21, 12)      # to that date (excluded)
 resume = False  # if True, resume a previous upload
                 # and dt0 and dt1 must be later than the previous date range
 fake_gcs = True # if True, won't upload to Google Cloud Storage
                 # but fake it in local trmm_bucket directory
+if fake_gcs:
+    store = 'trmm_bucket'
+else:
+    store = gcsfs.GCSMap('pangeo-data/trmm_3b42rt')
+if resume:
+    time_prev = xr.open_zarr(store).time.values
+time_nb = 40
 while dt < dt1:
     print(f'Downloading {time_nb} files from {dt}...')
     filenames, datetimes = download_files(dt, time_nb)
     ds = create_dataset(filenames, datetimes)
     if not resume and dt == dt0:
         encoding = create_zarr(ds, 'trmm_3b42rt')
+        empty_zarr('trmm_3b42rt', 'time')
     else:
         if resume:
             encoding = get_encoding('trmm_3b42rt_new')
@@ -259,6 +283,23 @@ while dt < dt1:
         subprocess.check_call('gsutil -m cp -r trmm_3b42rt/ gs://pangeo-data/'
                               .split())
     dt += timedelta(hours=3*time_nb)
+
+time_new = pd.date_range(dt0, dt1-timedelta(hours=3), freq='3H')
+if resume:
+    time_var = np.hstack((time_prev, time_new))
+else:
+    time_var = time_new
+time_ds = xr.DataArray(np.zeros(len(time_var)), coords=[time_var], dims=['time']).to_dataset(name='trmm_time')
+shutil.rmtree('trmm_time', ignore_errors=True)
+time_ds.to_zarr('trmm_time')
+if fake_gcs:
+    subprocess.check_call('rm -rf trmm_bucket/time'.split())
+    subprocess.check_call('cp -r trmm_time/time trmm_bucket/'.split())
+else:
+    subprocess.check_call('gsutil -m rm -rf '
+                          'gs://pangeo-data/trmm_3b42rt/time'.split())
+    subprocess.check_call('gsutil -m cp -r trmm_time/time/ '
+                          'gs://pangeo-data/trmm_3b42rt/'.split())
 ```
 
 ## Conclusion
