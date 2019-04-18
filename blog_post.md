@@ -1,8 +1,10 @@
 # Continuously extending Zarr datasets
 
 Pangeo is growing its dataset catalog. The preferred format of the project for
-storing data in the cloud is Zarr. In this post, we will show how we can play
-with Zarr to append to an archive as new data becomes available.
+storing data in the cloud is Zarr. As new needs appear, such as having datasets
+which extend with time, uploading these datasets to the cloud becomes a real
+challenge. In this post, we will show how we can play with Zarr to append to an
+archive as new data becomes available.
 
 ## The problem with live data
 
@@ -117,6 +119,39 @@ def create_dataset(filenames, datetimes):
     ds = ds.assign_coords(time=datetimes)
     return ds
 ```
+
+Now we can have a nice representation of (a part of) our dataset:
+
+```python
+dt = datetime(2000, 3, 1, 12)
+filenames, datetimes = download_files(dt, 40)
+ds = create_dataset(filenames, datetimes)
+print(ds)
+```
+
+```
+<xarray.Dataset>
+Dimensions:        (lat: 480, lon: 1440, time: 40)
+Coordinates:
+  * lat            (lat) float64 59.88 59.62 59.38 ... -59.38 -59.62 -59.88
+  * lon            (lon) float64 0.125 0.375 0.625 0.875 ... 359.4 359.6 359.9
+  * time           (time) datetime64[ns] 2000-03-01T12:00:00 ... 2000-03-06T09:00:00
+Data variables:
+    precipitation  (time, lat, lon) float32 0.0 0.0 0.0 0.0 ... 0.0 0.0 0.0 0.0
+```
+
+And plot e.g. the accumulated precipitation:
+
+```python
+import matplotlib.pyplot as plt
+
+ds.precipitation.sum(['time']).plot(vmax=50)
+plt.title('Accumulated precipitation between\n'
+          '2000-03-01T12 and 2000-03-06T09 (mm)')
+plt.show()
+```
+
+![alt text](https://github.com/davidbrochart/pangeo_upload/blob/master/blog_figure.png "Accumulated precipitation")
 
 ## Store the Dataset to local Zarr
 
