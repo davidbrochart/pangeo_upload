@@ -1,10 +1,12 @@
 # Continuously extending Zarr datasets
 
-Pangeo is growing its dataset catalog. The preferred format of the project for
-storing data in the cloud is Zarr. As new needs appear, such as having datasets
-which extend with time, uploading these datasets to the cloud becomes a real
-challenge. In this post, we will show how we can play with Zarr to append to an
-archive as new data becomes available.
+The Pangeo Project has been exploring the analysis of climate data in the cloud.
+Our preferred format for storing data in the cloud is
+[Zarr](https://zarr.readthedocs.io), due to its favorable interaction with
+object storage. Our first Zarr cloud datasets were static, but many real
+operational datasets need to be continuously updated, for example, extended in
+time. In this post, we will show how we can play with Zarr to append to an
+existing archive as new data becomes available.
 
 ## The problem with live data
 
@@ -24,7 +26,7 @@ issue. Recent improvements to Xarray will also ease this process.
 Let's take [TRMM 3B42RT](ftp://trmmopen.gsfc.nasa.gov/pub/merged/3B42RT) as an
 example dataset (near real time, satellite-based precipitation estimates from
 NASA). It is a precipitation array ranging from latitudes 60°N-S with resolution
-0.25°, 3-hour, from March 2000 to present.  It's a good example of a rather
+0.25°, 3-hour, from March 2000 to present. It's a good example of a rather
 obscure binary format, hidden behind a raw FTP server.
 
 Files are organized on the server in a particular way that is specific to this
@@ -160,7 +162,7 @@ uploaded to the cloud, it must already be chunked reasonably. There is a ~100 ms
 overhead associated with every read from cloud storage. To amortize this
 overhead, chunks must be bigger than 10 MiB. If we want to have several chunks
 fit comfortably in memory so that they can be processed in parallel, they must
-not be too big either. With today's machines, 100 MiB chunks are adviced. This
+not be too big either. With today's machines, 100 MiB chunks are advised. This
 means that for our dataset, we can concatenate 100 / (480 * 1440 * 4 / 1024 /
 1024) ~ 40 dates into one chunk. The Zarr will be created with that chunk size.
 
@@ -339,9 +341,14 @@ else:
 
 ## Conclusion
 
-This post showed how to stream data directly from a provider to Pangeo's data
-store. It actually serves two purposes:
+This post showed how to stream data directly from a provider to a cloud storage
+bucket. It actually serves two purposes:
+
 - for data that is produced continuously, we hacked around the Zarr data store
   format to efficiently append to an existing dataset.
 - for data that is bigger than your hard drive, we only stage a part of the
   dataset locally and have the cloud store the totality.
+
+An in-progress [pull request](https://github.com/pydata/xarray/pull/2706) will
+give Xarray the ability to directly append to Zarr stores. Once that feature is
+ready, this process may become simpler.
