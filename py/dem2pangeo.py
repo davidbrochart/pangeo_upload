@@ -48,7 +48,7 @@ with zipfile.ZipFile('/mnt/hgfs/SharedWithVM/CON_3s_GRID.zip', 'r') as z1:
             geo[3] = lat
             geo[0] = lon
             driver = gdal.GetDriverByName('GTiff')
-            ds = driver.Create(tif, 6000, 6000, 1, gdal.GDT_Byte, ['COMPRESS=LZW'])
+            ds = driver.Create(tif, 6000, 6000, 1, gdal.GDT_Int16, ['COMPRESS=LZW'])
             ds.SetGeoTransform(geo)
             ds.SetProjection('GEOGCS[\"WGS 84\",DATUM[\"WGS_1984\",SPHEROID[\"WGS 84\",6378137,298.257223563,AUTHORITY[\"EPSG\",\"7030\"]],AUTHORITY[\"EPSG\",\"6326\"]],PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433],AUTHORITY[\"EPSG\",\"4326\"]]')
             band = ds.GetRasterBand(1)
