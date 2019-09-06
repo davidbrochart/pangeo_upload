@@ -20,14 +20,19 @@ from numcodecs import GZip
 
 resume_upload = False
 dt0 = datetime(2000, 6, 1) # upload from this date
-dt1 = datetime(2019, 9, 1) # upload up to this date (excluded)
+dt1 = datetime(2000, 6, 5) # upload up to this date (excluded)
 
 if not resume_upload:
+    print(f'Cleaning in GCS...')
+    try:
+        p = subprocess.check_call('gsutil -m rm -rf gs://pangeo-data/gpm_imerg/early'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except:
+        pass
     shutil.rmtree('gpm_imerg/early', ignore_errors=True)
     #gcloud init
     #gcloud auth login
-date_nb = 4
-chunk_space_date_nb = date_nb * 2
+date_nb = 4 # corresponds to 2 hours
+chunk_space_date_nb = date_nb * 12 # concatenate in GCS every 24 hours (this is a time-consuming operation)
 login = os.getenv('GPM_LOGIN')
 #fields = ['precipitationCal', 'precipitationUncal', 'randomError', 'HQprecipitation', 'HQprecipSource', 'HQobservationTime', 'IRprecipitation', 'IRkalmanFilterWeight', 'probabilityLiquidPrecipitation', 'precipitationQualityIndex']
 fields = ['precipitationCal', 'probabilityLiquidPrecipitation']
@@ -102,9 +107,9 @@ async def process_files(state):
         else:
             # we have downloaded files to process
             print('Processing files:')
+            print('\n'.join([str(dt) for dt in state.download_datetimes]))
             ds = []
             for fname in state.download_filenames[:state.date_nb]:
-                print(fname)
                 try:
                     f = h5py.File(f'tmp/gpm_data/{fname}', 'r')
                     last_ds = xr.Dataset({field: (['lon', 'lat'], f[f'Grid/{field}'][0]) for field in fields}, coords={'lon':f['Grid/lon'], 'lat':f['Grid/lat']}).transpose()
