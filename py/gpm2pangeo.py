@@ -20,7 +20,7 @@ from numcodecs import GZip
 
 resume_upload = False
 dt0 = datetime(2000, 6, 1) # upload from this date
-dt1 = datetime(2000, 6, 5) # upload up to this date (excluded)
+dt1 = datetime(2000, 7, 1) # upload up to this date (excluded)
 
 if not resume_upload:
     print(f'Cleaning in GCS...')
@@ -32,7 +32,7 @@ if not resume_upload:
     #gcloud init
     #gcloud auth login
 date_nb = 4 # corresponds to 2 hours
-chunk_space_date_nb = date_nb * 12 # concatenate in GCS every 24 hours (this is a time-consuming operation)
+chunk_space_date_nb = date_nb * 12 * 30 # concatenate in GCS every 30 days (this is a time-consuming operation)
 login = os.getenv('GPM_LOGIN')
 #fields = ['precipitationCal', 'precipitationUncal', 'randomError', 'HQprecipitation', 'HQprecipSource', 'HQobservationTime', 'IRprecipitation', 'IRkalmanFilterWeight', 'probabilityLiquidPrecipitation', 'precipitationQualityIndex']
 fields = ['precipitationCal', 'probabilityLiquidPrecipitation']
