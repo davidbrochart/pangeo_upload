@@ -19,42 +19,26 @@ from numcodecs import GZip
 # set environment variable GPM_LOGIN
 
 resume_upload = False
-dt0 = datetime(2000, 6, 1) # upload from this date
+dt0 = datetime(2000, 6, 1) # upload from this date (ignore if resuming upload)
 dt1 = datetime(2000, 7, 1) # upload up to this date (excluded)
 
-if not resume_upload:
-    print(f'Cleaning in GCS...')
-    try:
-        p = subprocess.check_call('gsutil -m rm -rf gs://pangeo-data/gpm_imerg/early'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except:
-        pass
-    shutil.rmtree('gpm_imerg/early', ignore_errors=True)
-    #gcloud init
-    #gcloud auth login
-date_nb = 4 # corresponds to 2 hours
-chunk_space_date_nb = date_nb * 12 * 30 # concatenate in GCS every 30 days (this is a time-consuming operation)
-login = os.getenv('GPM_LOGIN')
-#fields = ['precipitationCal', 'precipitationUncal', 'randomError', 'HQprecipitation', 'HQprecipSource', 'HQobservationTime', 'IRprecipitation', 'IRkalmanFilterWeight', 'probabilityLiquidPrecipitation', 'precipitationQualityIndex']
-fields = ['precipitationCal', 'probabilityLiquidPrecipitation']
-shutil.rmtree('tmp/gpm_data', ignore_errors=True)
-os.makedirs('tmp/gpm_data', exist_ok=True)
-os.makedirs('gpm_imerg/early_stage', exist_ok=True)
-
-compressor = GZip(level=1)
-encoding = {field: {'compressor': compressor} for field in fields}
-
 class State(object):
-    def __init__(self, dt0, dt1, date_nb, chunk_space_date_nb):
+    def __init__(self, dt0, dt1):
         self.dt = dt0
         self.dt1 = dt1
-        self.date_nb = date_nb
+        self.date_nb = 4 # corresponds to 2 hours
         self.download_dt = dt0
         self.download_filenames = []
         self.download_datetimes = []
         self.download_done = False
         self.chunk_space_date_i = 0
-        self.chunk_space_date_nb = chunk_space_date_nb
+        self.chunk_space_date_nb = self.date_nb * 12 * 30 # concatenate in GCS every 30 days (this is a time-consuming operation)
         self.chunk_space_first_time = True
+        self.chunk_space_date_nb_gcs = self.date_nb * 12 * 60 # time chunk is 60 days
+        self.chunk_space_date_i_gcs = 0
+        self.chunk_space_new_gcs_chunk = True
+        self.gcs_chunk_space_exists = False
+        self.pix_nb = 100
 
 async def download_files(state):
     while state.download_dt < state.dt1:
@@ -76,7 +60,7 @@ async def download_files(state):
             filenames.append(filename)
         with open('tmp/gpm_list.txt', 'w') as f:
             f.write('\n'.join(urls))
-        print(f'Downloading {date_nb} files from FTP...')
+        print(f'Downloading {state.date_nb} files from FTP...')
         done1 = False
         while not done1:
             p = subprocess.Popen(f'aria2c -x 4 -i tmp/gpm_list.txt -d tmp/gpm_data --ftp-user={login} --ftp-passwd={login} --continue=true'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -112,7 +96,7 @@ async def process_files(state):
             for fname in state.download_filenames[:state.date_nb]:
                 try:
                     f = h5py.File(f'tmp/gpm_data/{fname}', 'r')
-                    last_ds = xr.Dataset({field: (['lon', 'lat'], f[f'Grid/{field}'][0]) for field in fields}, coords={'lon':f['Grid/lon'], 'lat':f['Grid/lat']}).transpose()
+                    last_ds = xr.Dataset({field: (['lon', 'lat'], f[f'Grid/{field}'][0].astype('float32')) for field in fields}, coords={'lon':f['Grid/lon'], 'lat':f['Grid/lat']}).transpose()
                     ds.append(last_ds)
                     f.close()
                 except:
@@ -125,102 +109,113 @@ async def process_files(state):
             await create_zarr(state)
             state.download_filenames = state.download_filenames[state.date_nb:]
             state.download_datetimes = state.download_datetimes[state.date_nb:]
-            state.dt += timedelta(minutes=30*state.date_nb)
             with open('tmp/state.pkl', 'wb') as f:
                 pickle.dump(state, f)
 
 async def create_zarr(state):
     state.chunk_space_date_i += state.date_nb
+    state.dt += timedelta(minutes=30*state.date_nb)
+    i0 = state.chunk_space_date_i_gcs // state.chunk_space_date_nb_gcs
+    i1 = i0 + 1
+    p_copy_chunk_time = []
     if not os.path.exists('gpm_imerg/early/chunk_time'):
         # chunk over time
         state.ds.chunk({'time': state.date_nb, 'lat': 1800, 'lon': 3600}).to_zarr('gpm_imerg/early/chunk_time', encoding=encoding)
         print('Copying chunk_time to GCS...')
-        subprocess.check_call('gsutil -m cp -r gpm_imerg/early/chunk_time gs://pangeo-data/gpm_imerg/early/chunk_time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        p_copy_chunk_time.append(subprocess.Popen('gsutil -m cp -r gpm_imerg/early/chunk_time gs://pangeo-data/gpm_imerg/early/chunk_time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         # chunk over space
-        state.ds.chunk({'time': state.date_nb, 'lat': 100, 'lon': 100}).to_zarr('gpm_imerg/early/chunk_space', encoding=encoding)
-        subprocess.check_call('cp -r gpm_imerg/early/chunk_space gpm_imerg/early_stage/'.split())
+        state.ds.chunk({'time': state.date_nb, 'lat': state.pix_nb, 'lon': state.pix_nb}).to_zarr('gpm_imerg/early/chunk_space', encoding=encoding)
+        subprocess.check_call('cp -r gpm_imerg/early/chunk_space gpm_imerg/early_stage/'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for field in fields:
+            subprocess.check_call(f'rm gpm_imerg/early/chunk_space/{field}/0.*', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:
         # chunk over time
         for dname in [f for f in os.listdir('gpm_imerg/early/chunk_time') if (not f.startswith('.')) and (f != 'time')]:
             for fname in [f for f in os.listdir(f'gpm_imerg/early/chunk_time/{dname}') if not f.startswith('.')]:
                 os.remove(f'gpm_imerg/early/chunk_time/{dname}/{fname}')
         state.ds.chunk({'time': state.date_nb, 'lat': 1800, 'lon': 3600}).to_zarr('gpm_imerg/early/chunk_time', append_dim='time', mode='a')
+        print('Copying chunk_time to GCS...')
         for field in fields:
-            print(f'Copying chunk_time/{field} to GCS...')
-            subprocess.check_call(f'gsutil -m cp -r gpm_imerg/early/chunk_time/{field} gs://pangeo-data/gpm_imerg/early/chunk_time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            p_copy_chunk_time.append(subprocess.Popen(f'gsutil -m cp -r gpm_imerg/early/chunk_time/{field} gs://pangeo-data/gpm_imerg/early/chunk_time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         # chunk over space
-        for dname in [f for f in os.listdir('gpm_imerg/early/chunk_space') if (not f.startswith('.')) and (f != 'time')]:
-            for fname in [f for f in os.listdir(f'gpm_imerg/early/chunk_space/{dname}') if not f.startswith('.')]:
-                os.remove(f'gpm_imerg/early/chunk_space/{dname}/{fname}')
-        state.ds.chunk({'time': state.date_nb, 'lat': 100, 'lon': 100}).to_zarr('gpm_imerg/early/chunk_space', append_dim='time', mode='a')
-        for field in fields + ['time']:
-            subprocess.check_call(f'cp -r gpm_imerg/early/chunk_space/{field}/* gpm_imerg/early_stage/chunk_space/{field}', shell=True)
-            subprocess.check_call(f'cp -r gpm_imerg/early/chunk_space/{field}/.z* gpm_imerg/early_stage/chunk_space/{field}', shell=True)
-        procs = []
+        state.ds.chunk({'time': state.date_nb, 'lat': state.pix_nb, 'lon': state.pix_nb}).to_zarr('gpm_imerg/early/chunk_space', append_dim='time', mode='a')
+        p_compose = []
         prefix_append = ''
         for field in fields:
-            # concatenate locally
+            # concatenate locally early_stage 0.* and  early x.*
             for name_append in [f for f in os.listdir(f'gpm_imerg/early/chunk_space/{field}') if not f.startswith('.')]:
                 if not prefix_append:
+                    # find index of chunk name
                     prefix_append = name_append[:name_append.find('.')]
-                    print(f'Concatenating locally 0.* with {prefix_append}.*')
-                name = name_append[len(prefix_append):]
-                path1 = f'gpm_imerg/early_stage/chunk_space/{field}/0{name}'
-                path2 = f'gpm_imerg/early_stage/chunk_space/{field}/{name_append}'
+                    if prefix_append == '0':
+                        break
+                    print(f'Concatenating locally 0.* and {prefix_append}.*')
+                name = '0' + name_append[len(prefix_append):]
+                path1 = f'gpm_imerg/early_stage/chunk_space/{field}/{name}'
+                path2 = f'gpm_imerg/early/chunk_space/{field}/{name_append}'
                 with open(path1, 'ab') as f1, open(path2, 'rb') as f2:
                     f1.write(f2.read())
                 os.remove(path2)
             # set time chunks to time shape
-            with open(f'gpm_imerg/early_stage/chunk_space/{field}/.zarray') as f:
-                zarray = json.load(f)
-            zarray['chunks'][0] = zarray['shape'][0]
-            with open(f'gpm_imerg/early_stage/chunk_space/{field}/.zarray', 'wt') as f:
-                json.dump(zarray, f)
-            if (not state.chunk_space_first_time) and (state.chunk_space_date_i == state.chunk_space_date_nb):
-                # we need to concatenate in GCS
-                # first, rename 0.* to 1.* locally
-                for name_append in [f for f in os.listdir(f'gpm_imerg/early_stage/chunk_space/{field}') if f.startswith('0.')]:
-                    name = '1.' + name_append[2:]
-                    path1 = f'gpm_imerg/early_stage/chunk_space/{field}/{name_append}'
-                    path2 = f'gpm_imerg/early_stage/chunk_space/{field}/{name}'
-                    #subprocess.check_call(f'mv {path1} {path2}'.split())
+            with open(f'gpm_imerg/early/chunk_space/{field}/.zarray') as f1, open(f'gpm_imerg/early_stage/chunk_space/{field}/.zarray', 'wt') as f2:
+                zarray = json.load(f1)
+                zarray['chunks'][0] = state.chunk_space_date_nb_gcs
+                json.dump(zarray, f2)
+            if (state.chunk_space_date_i == state.chunk_space_date_nb) or (state.dt == state.dt1):
+                # rename 0.* to x.* locally
+                if state.chunk_space_new_gcs_chunk:
+                    i2 = i0
+                else:
+                    i2 = i1
+                for prev_name in [f for f in os.listdir(f'gpm_imerg/early_stage/chunk_space/{field}') if f.startswith('0.')]:
+                    new_name = f'{i2}.{prev_name[2:]}'
+                    path1 = f'gpm_imerg/early_stage/chunk_space/{field}/{prev_name}'
+                    path2 = f'gpm_imerg/early_stage/chunk_space/{field}/{new_name}'
                     os.rename(path1, path2)
-                # then, copy all 1.* files to GCS
-                print(f'Copying chunk_space/{field} to GCS...')
-                subprocess.check_call(f'gsutil -m cp -r gpm_imerg/early_stage/chunk_space/{field} gs://pangeo-data/gpm_imerg/early/chunk_space'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                # last, concatenate in GCS (composing)
-                print(f'Concatenating chunk_space/{field} in GCS...')
-                for name_append in [f for f in os.listdir(f'gpm_imerg/early_stage/chunk_space/{field}') if f.startswith('1.')]:
-                    name = '0.' + name_append[2:]
-                    path1 = f'gs://pangeo-data/gpm_imerg/early/chunk_space/{field}/{name}'
-                    path2 = f'gs://pangeo-data/gpm_imerg/early/chunk_space/{field}/{name_append}'
-                    cmd = f'gsutil compose {path1} {path2} {path1}'
-                    procs.append(subprocess.Popen(cmd.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-        if state.chunk_space_first_time and (state.chunk_space_date_i == state.chunk_space_date_nb):
-            state.chunk_space_first_time = False
-            print('Copying chunk_space to GCS...')
-            subprocess.check_call('gsutil -m cp -r gpm_imerg/early_stage/chunk_space gs://pangeo-data/gpm_imerg/early/chunk_space'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            for field in fields:
-                subprocess.check_call(f'rm -rf gpm_imerg/early_stage/chunk_space/{field}/0.*', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if procs:
-            message_printed = False
-            done = False
-            while not done:
-                done = True
-                for proc in procs:
-                    if proc.poll() is None:
-                        if not message_printed:
-                            print('Waiting for all processes to finish...')
-                            message_printed = True
-                        done = False
-                        await asyncio.sleep(1)
-                        break
+                # copy all x.* files to GCS
+                print(f'Copying chunk_space/{field}/{i2}.* to GCS...')
+                if state.gcs_chunk_space_exists:
+                    subprocess.check_call(f'gsutil -m cp -r gpm_imerg/early_stage/chunk_space/{field} gs://pangeo-data/gpm_imerg/early/chunk_space'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    subprocess.check_call(f'gsutil -m cp -r gpm_imerg/early_stage/chunk_space gs://pangeo-data/gpm_imerg/early'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    state.gcs_chunk_space_exists = True
+                if not state.chunk_space_new_gcs_chunk:
+                    # we need to concatenate in GCS (compose)
+                    print(f'Concatenating chunk_space/{field}/{i0}.* and chunk_space/{field}/{i1}.* in GCS...')
+                    for name_append in [f for f in os.listdir(f'gpm_imerg/early_stage/chunk_space/{field}') if f.startswith(f'{i1}.')]:
+                        name = f'{i0}.{name_append[2:]}'
+                        path1 = f'gs://pangeo-data/gpm_imerg/early/chunk_space/{field}/{name}'
+                        path2 = f'gs://pangeo-data/gpm_imerg/early/chunk_space/{field}/{name_append}'
+                        cmd = f'gsutil compose {path1} {path2} {path1}'
+                        p_compose.append(subprocess.Popen(cmd.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+                subprocess.check_call(f'rm -rf gpm_imerg/early_stage/chunk_space/{field}/{i2}.*', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if p_compose:
+            await wait_for_process(p_compose)
             for field in fields:
                 print(f'Cleaning chunk_space/{field} in GCS...')
-                subprocess.check_call(f'gsutil -m rm gs://pangeo-data/gpm_imerg/early/chunk_space/{field}/1.*'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            for field in fields:
-                subprocess.check_call(f'rm -rf gpm_imerg/early_stage/chunk_space/{field}/1.*', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.check_call(f'gsutil -m rm -r gs://pangeo-data/gpm_imerg/early/chunk_space/{field}/{i1}.*'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    await wait_for_process(p_copy_chunk_time)
+    if state.chunk_space_date_i == state.chunk_space_date_nb:
+        state.chunk_space_new_gcs_chunk = False
     state.chunk_space_date_i %= state.chunk_space_date_nb
+    state.chunk_space_date_i_gcs += state.date_nb
+    if (state.chunk_space_date_i_gcs % state.chunk_space_date_nb_gcs) == 0:
+        state.chunk_space_new_gcs_chunk = True
+
+async def wait_for_process(procs):
+    if procs:
+        message_printed = True#False
+        done = False
+        while not done:
+            done = True
+            for proc in procs:
+                if proc.poll() is None:
+                    if not message_printed:
+                        print('Waiting for all processes to finish...')
+                        message_printed = True
+                    done = False
+                    await asyncio.sleep(1)
+                    break
 
 async def main():
     if resume_upload:
@@ -229,7 +224,7 @@ async def main():
         state.dt1 = dt1
         state.download_done = False
     else:
-        state = State(dt0, dt1, date_nb, chunk_space_date_nb)
+        state = State(dt0, dt1)
 
     tasks = []
     tasks.append(download_files(state))
@@ -237,8 +232,31 @@ async def main():
 
     await asyncio.gather(*tasks)
 
+if not resume_upload:
+    print(f'Cleaning in GCS...')
+    try:
+        subprocess.check_call('gsutil -m rm -rf gs://pangeo-data/gpm_imerg/early'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except:
+        pass
+    shutil.rmtree('gpm_imerg/early', ignore_errors=True)
+    shutil.rmtree('gpm_imerg/early_stage', ignore_errors=True)
+    #gcloud init
+    #gcloud auth login
+
+login = os.getenv('GPM_LOGIN')
+#fields = ['precipitationCal', 'precipitationUncal', 'randomError', 'HQprecipitation', 'HQprecipSource', 'HQobservationTime', 'IRprecipitation', 'IRkalmanFilterWeight', 'probabilityLiquidPrecipitation', 'precipitationQualityIndex']
+fields = ['precipitationCal', 'probabilityLiquidPrecipitation']
+shutil.rmtree('tmp/gpm_data', ignore_errors=True)
+os.makedirs('tmp/gpm_data', exist_ok=True)
+os.makedirs('gpm_imerg/early', exist_ok=True)
+os.makedirs('gpm_imerg/early_stage', exist_ok=True)
+
+compressor = GZip(level=1)
+encoding = {field: {'compressor': compressor} for field in fields}
+
 asyncio.run(main())
 
+print('Finalizing')
 ds = xr.open_zarr('gpm_imerg/early/chunk_time')
 ds2 = xr.DataArray(np.zeros(ds.time.shape), coords=[ds.time.values], dims=['time'])
 shutil.rmtree('gpm_imerg/early/chunk_time2', ignore_errors=True)
