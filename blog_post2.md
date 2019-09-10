@@ -2,20 +2,33 @@
 
 This post is a follow-up of [Continuously extending Zarr
 datasets](https://medium.com/pangeo/continuously-extending-zarr-datasets-c54fbad3967d),
-which was specifically dealing with how to extend a Zarr dataset as data becomes
-available. The underlying assumption was that, because data is produced through
-time, the Zarr dataset would also be chunked in time. But the way a dataset is
-written has a great impact on the performances of a read operation. For
-instance, for a 3-dimension dataset (latitude, longitude and time) that is
-written with no chunk in space and small chunks in time, getting the data for
-the whole globe and a short period of time will be quite quick, but it will be
-inefficient for a small region of the world and a long period of time. This is
-because for the latter, a lot of files will have to be read, and most data in
-each file will be thrown away. For this read operation to be efficient, we need
-the dataset to be organized differently from the beginning: it must be written
-with small chunks in space and big chunks (or no chunk at all) in time. In this
-post, we will show how to transform a dataset that is chunked in time into a
-dataset that is chunked in space (chunk transposition).
+which was specifically dealing with how to extend a Zarr dataset as data
+becomes available. The underlying assumption was that, because data is produced
+through time, the Zarr dataset would also be chunked in time. But the way a
+dataset is written has a great impact on the performances of a read operation.
+For instance, consider a 3-dimension dataset (latitude, longitude and time)
+that is written with no chunk in space and small chunks in time, as shown
+below (only one chunk is depicted for simplicity):
+
+![alt
+text](https://github.com/davidbrochart/pangeo_upload/blob/master/chunk_time.png
+"A dataset chunked in time")
+
+Getting data for the whole globe and a short period of time will be quite
+quick, but it will be inefficient for a small region of the world and a long
+period of time. This is because for the latter, a lot of files will have to be
+read, and most data in each file will be thrown away. For this read operation
+to be efficient, we need the dataset to be organized differently from the
+beginning: it must be written with small chunks in space and big chunks (or no
+chunk at all) in time, as shown below:
+
+![alt
+text](https://github.com/davidbrochart/pangeo_upload/blob/master/chunk_space.png
+"A dataset chunked in space")
+
+In this post, we will show how to transform a dataset that is chunked in time
+into a dataset that is chunked in space (chunk transposition).
+
 
 ## Live data is already chunked in time
 
