@@ -21,7 +21,7 @@ from numcodecs import GZip
 resume_upload = False
 dt0 = datetime(2000, 6, 1) # upload from this date (ignore if resuming upload)
 dt1 = datetime(2000, 7, 1) # upload up to this date (excluded)
-wd = '/media/pi/cea5e173-7f41-420a-9319-6299996ffada/'
+wd = '.'
 
 class State(object):
     def __init__(self, dt0, dt1):
@@ -59,12 +59,12 @@ async def download_files(state):
             filename = f'3B-HHR-E.MS.MRG.3IMERG.{year}{month}{day}-S{hour}{min0}00-E{hour}{min1}59.{minutes}.V06B.RT-H5'
             urls.append(f'ftp://jsimpson.pps.eosdis.nasa.gov/NRTPUB/imerg/early/{year}{month}/{filename}')
             filenames.append(filename)
-        with open(f'{wd}/tmp/gpm_list.txt', 'w') as f:
+        with open(f'{wd}/gpm_imerg/tmp/gpm_list.txt', 'w') as f:
             f.write('\n'.join(urls))
         print(f'Downloading {state.date_nb} files from FTP...')
         done1 = False
         while not done1:
-            p = subprocess.Popen(f'aria2c -x 4 -i {wd}/tmp/gpm_list.txt -d {wd}/tmp/gpm_data --ftp-user={login} --ftp-passwd={login} --continue=true'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            p = subprocess.Popen(f'aria2c -x 4 -i {wd}/gpm_imerg/tmp/gpm_list.txt -d {wd}/gpm_imerg/tmp/gpm_data --ftp-user={login} --ftp-passwd={login} --continue=true'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             done2 = False
             while not done2:
                 return_code = p.poll()
@@ -96,20 +96,20 @@ async def process_files(state):
             ds = []
             for fname in state.download_filenames[:state.date_nb]:
                 try:
-                    f = h5py.File(f'{wd}/tmp/gpm_data/{fname}', 'r')
+                    f = h5py.File(f'{wd}/gpm_imerg/tmp/gpm_data/{fname}', 'r')
                     last_ds = xr.Dataset({field: (['lon', 'lat'], f[f'Grid/{field}'][0].astype('float32')) for field in fields}, coords={'lon':f['Grid/lon'], 'lat':f['Grid/lat']}).transpose()
                     ds.append(last_ds)
                     f.close()
                 except:
                     ds.append(last_ds)
-                os.remove(f'{wd}/tmp/gpm_data/{fname}')
+                os.remove(f'{wd}/gpm_imerg/tmp/gpm_data/{fname}')
             ds = xr.concat(ds, 'time')
             ds = ds.assign_coords(time=state.download_datetimes[:state.date_nb])
             ds = ds.where(ds >= 0)
             await create_zarr(state, ds)
             state.download_filenames = state.download_filenames[state.date_nb:]
             state.download_datetimes = state.download_datetimes[state.date_nb:]
-            with open(f'{wd}/tmp/state.pkl', 'wb') as f:
+            with open(f'{wd}/gpm_imerg/tmp/state.pkl', 'wb') as f:
                 pickle.dump(state, f)
 
 async def create_zarr(state, ds):
@@ -219,7 +219,7 @@ async def wait_for_process(procs):
 
 async def main():
     if resume_upload:
-        with open(f'{wd}/tmp/state.pkl', 'rb') as f:
+        with open(f'{wd}/gpm_imerg/tmp/state.pkl', 'rb') as f:
             state = pickle.load(f)
         state.dt1 = dt1
         state.download_done = False
@@ -246,8 +246,8 @@ if not resume_upload:
 login = os.getenv('GPM_LOGIN')
 #fields = ['precipitationCal', 'precipitationUncal', 'randomError', 'HQprecipitation', 'HQprecipSource', 'HQobservationTime', 'IRprecipitation', 'IRkalmanFilterWeight', 'probabilityLiquidPrecipitation', 'precipitationQualityIndex']
 fields = ['precipitationCal', 'probabilityLiquidPrecipitation']
-shutil.rmtree(f'{wd}/tmp/gpm_data', ignore_errors=True)
-os.makedirs(f'{wd}/tmp/gpm_data', exist_ok=True)
+shutil.rmtree(f'{wd}/gpm_imerg/tmp/gpm_data', ignore_errors=True)
+os.makedirs(f'{wd}/gpm_imerg/tmp/gpm_data', exist_ok=True)
 os.makedirs(f'{wd}/gpm_imerg/early', exist_ok=True)
 os.makedirs(f'{wd}/gpm_imerg/early_stage', exist_ok=True)
 
