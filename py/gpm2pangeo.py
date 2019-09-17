@@ -9,6 +9,7 @@ import subprocess
 import h5py
 import pickle
 import numpy as np
+import pandas as pd
 import json
 import asyncio
 from numcodecs import GZip
@@ -19,8 +20,8 @@ from numcodecs import GZip
 # set environment variable GPM_LOGIN
 
 resume_upload = False
-dt0 = datetime(2000, 6, 1) # upload from this date (ignore if resuming upload)
-dt1 = datetime(2000, 7, 1) # upload up to this date (excluded)
+dt0 = datetime(2000, 6, 1) # upload from this date
+dt1 = datetime(2000, 6, 1) + timedelta(days=1*60) # upload up to this date (excluded)
 wd = '.'
 
 class State(object):
@@ -32,6 +33,7 @@ class State(object):
         self.download_filenames = []
         self.download_datetimes = []
         self.download_done = False
+        self.chunk_time_date_i = 0
         self.chunk_space_date_i = 0
         self.chunk_space_date_nb = self.date_nb * 12 * 60 # concatenate in GCS every 30 days (this is a time-consuming operation)
         self.chunk_space_first_time = True
@@ -44,8 +46,8 @@ class State(object):
 async def download_files(state):
     while state.download_dt < state.dt1:
         # no need to download files at a faster rate than we are able to upload the to GCS
-        while len(state.download_filenames) > 2 * state.date_nb:
-            await asyncio.sleep(1)
+        while len(state.download_filenames) > 3 * state.date_nb:
+            await asyncio.sleep(0.1)
         datetimes = [state.download_dt + timedelta(minutes=30*i) for i in range(state.date_nb)]
         urls, filenames = [], []
         for t in datetimes:
@@ -64,12 +66,12 @@ async def download_files(state):
         print(f'Downloading {state.date_nb} files from FTP...')
         done1 = False
         while not done1:
-            p = subprocess.Popen(f'aria2c -x 4 -i {wd}/gpm_imerg/tmp/gpm_list.txt -d {wd}/gpm_imerg/tmp/gpm_data --ftp-user={login} --ftp-passwd={login} --continue=true'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            p = subprocess.Popen(f'aria2c -x 8 -i {wd}/gpm_imerg/tmp/gpm_list.txt -d {wd}/gpm_imerg/tmp/gpm_data --ftp-user={login} --ftp-passwd={login} --continue=true'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             done2 = False
             while not done2:
                 return_code = p.poll()
                 if return_code is None:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(0)
                 elif return_code != 0:
                     await asyncio.sleep(1800)
                     done2 = True
@@ -88,7 +90,7 @@ async def process_files(state):
             return
         if not state.download_filenames:
             # wait for files to be downloaded
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.1)
         else:
             # we have downloaded files to process
             print('Processing files:')
@@ -120,46 +122,56 @@ async def create_zarr(state, ds):
     p_copy_chunk_time = []
     if not os.path.exists(f'{wd}/gpm_imerg/early/chunk_time'):
         # chunk over time
-        ds.chunk({'time': state.date_nb, 'lat': 1800, 'lon': 3600}).to_zarr(f'{wd}/gpm_imerg/early/chunk_time', encoding=encoding)
+        ds.chunk({'time': state.date_nb, 'lat': 1800, 'lon': 3600}).to_zarr(f'{wd}/gpm_imerg/early/chunk_time')
         print('Copying chunk_time to GCS...')
-        p_copy_chunk_time.append(subprocess.Popen(f'gsutil -m cp -r {wd}/gpm_imerg/early/chunk_time gs://pangeo-data/gpm_imerg/early/chunk_time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+        #p_copy_chunk_time.append(subprocess.Popen(f'gsutil -m cp -r {wd}/gpm_imerg/early/chunk_time gs://pangeo-data/gpm_imerg/early/chunk_time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+        subprocess.check_call(f'gsutil -m cp -r {wd}/gpm_imerg/early/chunk_time gs://pangeo-data/gpm_imerg/early/chunk_time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         # chunk over space
+        print('Chunking in space...')
         ds.chunk({'time': state.date_nb, 'lat': state.pix_nb, 'lon': state.pix_nb}).to_zarr(f'{wd}/gpm_imerg/early/chunk_space', encoding=encoding)
         subprocess.check_call(f'cp -r {wd}/gpm_imerg/early/chunk_space {wd}/gpm_imerg/early_stage/'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for field in fields:
             subprocess.check_call(f'rm {wd}/gpm_imerg/early/chunk_space/{field}/0.*', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:
         # chunk over time
-        for dname in [f for f in os.listdir(f'{wd}/gpm_imerg/early/chunk_time') if (not f.startswith('.')) and (f != 'time')]:
-            for fname in [f for f in os.listdir(f'{wd}/gpm_imerg/early/chunk_time/{dname}') if not f.startswith('.')]:
-                os.remove(f'{wd}/gpm_imerg/early/chunk_time/{dname}/{fname}')
-        ds.chunk({'time': state.date_nb, 'lat': 1800, 'lon': 3600}).to_zarr(f'{wd}/gpm_imerg/early/chunk_time', append_dim='time', mode='a')
+        shutil.rmtree(f'{wd}/gpm_imerg/early/chunk_time', ignore_errors=True)
+        ds.chunk({'time': state.date_nb, 'lat': 1800, 'lon': 3600}).to_zarr(f'{wd}/gpm_imerg/early/chunk_time')
         print('Copying chunk_time to GCS...')
         for field in fields:
-            p_copy_chunk_time.append(subprocess.Popen(f'gsutil -m cp -r {wd}/gpm_imerg/early/chunk_time/{field} gs://pangeo-data/gpm_imerg/early/chunk_time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+            for prev_name in [f for f in os.listdir(f'{wd}/gpm_imerg/early/chunk_time/{field}') if f.startswith('0.')]:
+                new_name = f'{state.chunk_time_date_i}.{prev_name[2:]}'
+                path1 = f'{wd}/gpm_imerg/early/chunk_time/{field}/{prev_name}'
+                path2 = f'{wd}/gpm_imerg/early/chunk_time/{field}/{new_name}'
+                os.rename(path1, path2)
+            # set time time shape
+            with open(f'{wd}/gpm_imerg/early/chunk_time/{field}/.zarray') as f:
+                zarray = json.load(f)
+            zarray['shape'][0] = (state.chunk_time_date_i + 1) * state.date_nb
+            with open(f'{wd}/gpm_imerg/early/chunk_time/{field}/.zarray', 'wt') as f:
+                json.dump(zarray, f)
+            #p_copy_chunk_time.append(subprocess.Popen(f'gsutil -m cp -r {wd}/gpm_imerg/early/chunk_time/{field} gs://pangeo-data/gpm_imerg/early/chunk_time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+            subprocess.check_call(f'gsutil -m cp -r {wd}/gpm_imerg/early/chunk_time/{field} gs://pangeo-data/gpm_imerg/early/chunk_time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            await asyncio.sleep(0)
         # chunk over space
-        ds.chunk({'time': state.date_nb, 'lat': state.pix_nb, 'lon': state.pix_nb}).to_zarr(f'{wd}/gpm_imerg/early/chunk_space', append_dim='time', mode='a')
+        print('Chunking in space...')
+        shutil.rmtree(f'{wd}/gpm_imerg/early/chunk_space', ignore_errors=True)
+        ds.chunk({'time': state.date_nb, 'lat': state.pix_nb, 'lon': state.pix_nb}).to_zarr(f'{wd}/gpm_imerg/early/chunk_space', encoding=encoding)
         p_compose = []
-        prefix_append = ''
         for field in fields:
-            # concatenate locally early_stage 0.* and  early x.*
+            await asyncio.sleep(0)
+            print(f'Concatenating locally in chunk_space/{field}')
+            # concatenate locally in early_stage 0.*
             for name_append in [f for f in os.listdir(f'{wd}/gpm_imerg/early/chunk_space/{field}') if not f.startswith('.')]:
-                if not prefix_append:
-                    # find index of chunk name
-                    prefix_append = name_append[:name_append.find('.')]
-                    if prefix_append == '0':
-                        break
-                    print(f'Concatenating locally 0.* and {prefix_append}.*')
-                name = '0' + name_append[len(prefix_append):]
-                path1 = f'{wd}/gpm_imerg/early_stage/chunk_space/{field}/{name}'
+                path1 = f'{wd}/gpm_imerg/early_stage/chunk_space/{field}/{name_append}'
                 path2 = f'{wd}/gpm_imerg/early/chunk_space/{field}/{name_append}'
                 with open(path1, 'ab') as f1, open(path2, 'rb') as f2:
                     f1.write(f2.read())
                 os.remove(path2)
-            # set time chunks to time shape
+            # set time chunks and time shape
             with open(f'{wd}/gpm_imerg/early/chunk_space/{field}/.zarray') as f1, open(f'{wd}/gpm_imerg/early_stage/chunk_space/{field}/.zarray', 'wt') as f2:
                 zarray = json.load(f1)
                 zarray['chunks'][0] = state.chunk_space_date_nb_gcs
+                zarray['shape'][0] = state.chunk_space_date_nb_gcs
                 json.dump(zarray, f2)
             if (state.chunk_space_date_i == state.chunk_space_date_nb) or (state.dt == state.dt1):
                 # rename 0.* to x.* locally
@@ -201,10 +213,11 @@ async def create_zarr(state, ds):
     state.chunk_space_date_i_gcs += state.date_nb
     if (state.chunk_space_date_i_gcs % state.chunk_space_date_nb_gcs) == 0:
         state.chunk_space_new_gcs_chunk = True
+    state.chunk_time_date_i += 1
 
 async def wait_for_process(procs):
     if procs:
-        message_printed = True#False
+        message_printed = False
         done = False
         while not done:
             done = True
@@ -214,7 +227,7 @@ async def wait_for_process(procs):
                         print('Waiting for all processes to finish...')
                         message_printed = True
                     done = False
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(0.1)
                     break
 
 async def main():
@@ -257,14 +270,16 @@ encoding = {field: {'compressor': compressor} for field in fields}
 asyncio.run(main())
 
 print('Finalizing')
-ds = xr.open_zarr(f'{wd}/gpm_imerg/early/chunk_time')
-ds2 = xr.DataArray(np.zeros(ds.time.shape), coords=[ds.time.values], dims=['time'])
-shutil.rmtree(f'{wd}/gpm_imerg/early/chunk_time2', ignore_errors=True)
-ds2.to_dataset(name='dummy').to_zarr(f'{wd}/gpm_imerg/early/chunk_time2')
+
+time_var = pd.date_range(dt0, dt1-timedelta(minutes=30), freq='30min') + timedelta(minutes=15)
+time_ds = xr.DataArray(np.zeros(len(time_var)), coords=[time_var], dims=['time']).to_dataset(name='gpm_time')
+shutil.rmtree(f'{wd}/gpm_imerg/early/time', ignore_errors=True)
+time_ds.to_zarr(f'{wd}/gpm_imerg/early/time')
+
 # set time chunks to time shape
 subprocess.check_call('gsutil -m rm -r gs://pangeo-data/gpm_imerg/early/chunk_time/time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-subprocess.check_call(f'gsutil -m cp -r {wd}/gpm_imerg/early/chunk_time2/time gs://pangeo-data/gpm_imerg/early/chunk_time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+subprocess.check_call(f'gsutil -m cp -r {wd}/gpm_imerg/early/time/time gs://pangeo-data/gpm_imerg/early/chunk_time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 subprocess.check_call('gsutil -m rm -r gs://pangeo-data/gpm_imerg/early/chunk_space/time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-subprocess.check_call(f'gsutil -m cp -r {wd}/gpm_imerg/early/chunk_time2/time gs://pangeo-data/gpm_imerg/early/chunk_space'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+subprocess.check_call(f'gsutil -m cp -r {wd}/gpm_imerg/early/time/time gs://pangeo-data/gpm_imerg/early/chunk_space'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 for field in fields:
     subprocess.check_call(f'gsutil cp {wd}/gpm_imerg/early_stage/chunk_space/{field}/.zarray gs://pangeo-data/gpm_imerg/early/chunk_space/{field}'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
