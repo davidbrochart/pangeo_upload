@@ -71,9 +71,9 @@ async def download_files(state):
             while not done2:
                 return_code = p.poll()
                 if return_code is None:
-                    await asyncio.sleep(0)
+                    await asyncio.sleep(0.1)
                 elif return_code != 0:
-                    await asyncio.sleep(1800)
+                    await asyncio.sleep(1)
                     done2 = True
                 else:
                     state.download_filenames += filenames
@@ -171,7 +171,7 @@ async def create_zarr(state, ds):
             with open(f'{wd}/gpm_imerg/early/chunk_space/{field}/.zarray') as f1, open(f'{wd}/gpm_imerg/early_stage/chunk_space/{field}/.zarray', 'wt') as f2:
                 zarray = json.load(f1)
                 zarray['chunks'][0] = state.chunk_space_date_nb_gcs
-                zarray['shape'][0] = state.chunk_space_date_nb_gcs
+                zarray['shape'][0] = (state.chunk_time_date_i + 1) * state.date_nb
                 json.dump(zarray, f2)
             if (state.chunk_space_date_i == state.chunk_space_date_nb) or (state.dt == state.dt1):
                 # rename 0.* to x.* locally
