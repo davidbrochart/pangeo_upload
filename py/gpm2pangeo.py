@@ -19,7 +19,7 @@ from numcodecs import GZip
 # dt1 is the date up to which you want to upload (excluded), and has to be increased between uploads.
 # set environment variable GPM_LOGIN
 
-resume_upload = False
+resume_upload = True
 dt0 = datetime(2000, 6, 1) # upload from this date
 dt1 = datetime(2000, 6, 1) + timedelta(days=1*60) # upload up to this date (excluded)
 wd = '.'
@@ -94,7 +94,7 @@ async def process_files(state):
         else:
             # we have downloaded files to process
             print('Processing files:')
-            print('\n'.join([str(dt) for dt in state.download_datetimes]))
+            print('\n'.join([str(dt) for dt in state.download_datetimes[:state.date_nb]]))
             ds = []
             for fname in state.download_filenames[:state.date_nb]:
                 try:
@@ -150,7 +150,13 @@ async def create_zarr(state, ds):
             with open(f'{wd}/gpm_imerg/early/chunk_time/{field}/.zarray', 'wt') as f:
                 json.dump(zarray, f)
             #p_copy_chunk_time.append(subprocess.Popen(f'gsutil -m cp -r {wd}/gpm_imerg/early/chunk_time/{field} gs://pangeo-data/gpm_imerg/early/chunk_time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-            subprocess.check_call(f'gsutil -m cp -r {wd}/gpm_imerg/early/chunk_time/{field} gs://pangeo-data/gpm_imerg/early/chunk_time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            done = False
+            while not done:
+                done = True
+                try:
+                    subprocess.check_call(f'gsutil -m cp -r {wd}/gpm_imerg/early/chunk_time/{field} gs://pangeo-data/gpm_imerg/early/chunk_time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except:
+                    done = False
             await asyncio.sleep(0)
         # chunk over space
         print('Chunking in space...')
@@ -186,11 +192,17 @@ async def create_zarr(state, ds):
                     os.rename(path1, path2)
                 # copy all x.* files to GCS
                 print(f'Copying chunk_space/{field}/{i2}.* to GCS...')
-                if state.gcs_chunk_space_exists:
-                    subprocess.check_call(f'gsutil -m cp -r {wd}/gpm_imerg/early_stage/chunk_space/{field} gs://pangeo-data/gpm_imerg/early/chunk_space'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                else:
-                    subprocess.check_call(f'gsutil -m cp -r {wd}/gpm_imerg/early_stage/chunk_space gs://pangeo-data/gpm_imerg/early'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    state.gcs_chunk_space_exists = True
+                done = False
+                while not done:
+                    done = True
+                    try:
+                        if state.gcs_chunk_space_exists:
+                            subprocess.check_call(f'gsutil -m cp -r {wd}/gpm_imerg/early_stage/chunk_space/{field} gs://pangeo-data/gpm_imerg/early/chunk_space'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        else:
+                            subprocess.check_call(f'gsutil -m cp -r {wd}/gpm_imerg/early_stage/chunk_space gs://pangeo-data/gpm_imerg/early'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            state.gcs_chunk_space_exists = True
+                    except:
+                        done = False
                 if not state.chunk_space_new_gcs_chunk:
                     # we need to concatenate in GCS (compose)
                     print(f'Concatenating chunk_space/{field}/{i0}.* and chunk_space/{field}/{i1}.* in GCS...')
@@ -277,9 +289,15 @@ shutil.rmtree(f'{wd}/gpm_imerg/early/time', ignore_errors=True)
 time_ds.to_zarr(f'{wd}/gpm_imerg/early/time')
 
 # set time chunks to time shape
-subprocess.check_call('gsutil -m rm -r gs://pangeo-data/gpm_imerg/early/chunk_time/time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-subprocess.check_call(f'gsutil -m cp -r {wd}/gpm_imerg/early/time/time gs://pangeo-data/gpm_imerg/early/chunk_time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-subprocess.check_call('gsutil -m rm -r gs://pangeo-data/gpm_imerg/early/chunk_space/time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-subprocess.check_call(f'gsutil -m cp -r {wd}/gpm_imerg/early/time/time gs://pangeo-data/gpm_imerg/early/chunk_space'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-for field in fields:
-    subprocess.check_call(f'gsutil cp {wd}/gpm_imerg/early_stage/chunk_space/{field}/.zarray gs://pangeo-data/gpm_imerg/early/chunk_space/{field}'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+done = False
+while not done:
+    done = True
+    try:
+        subprocess.check_call('gsutil -m rm -r gs://pangeo-data/gpm_imerg/early/chunk_time/time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.check_call(f'gsutil -m cp -r {wd}/gpm_imerg/early/time/time gs://pangeo-data/gpm_imerg/early/chunk_time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.check_call('gsutil -m rm -r gs://pangeo-data/gpm_imerg/early/chunk_space/time'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.check_call(f'gsutil -m cp -r {wd}/gpm_imerg/early/time/time gs://pangeo-data/gpm_imerg/early/chunk_space'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for field in fields:
+            subprocess.check_call(f'gsutil cp {wd}/gpm_imerg/early_stage/chunk_space/{field}/.zarray gs://pangeo-data/gpm_imerg/early/chunk_space/{field}'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except:
+        done = False
