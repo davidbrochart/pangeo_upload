@@ -211,7 +211,7 @@ async def main():
     time_ds.to_zarr(f'{wd}/gpm_imerg/late/time')
 
     # set time chunks to time shape
-    if state.gcs:
+    if gcs:
         done = False
         while not done:
             done = True
