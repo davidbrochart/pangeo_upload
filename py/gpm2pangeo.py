@@ -74,14 +74,15 @@ async def download_files(state):
             min1 = t.minute + 29
             minutes = str(t.hour*60+t.minute).zfill(4)
             filename = f'3B-HHR-L.MS.MRG.3IMERG.{year}{month}{day}-S{hour}{min0}00-E{hour}{min1}59.{minutes}.V06B.RT-H5'
-            urls.append(f'ftp://jsimpson.pps.eosdis.nasa.gov/NRTPUB/imerg/late/{year}{month}/{filename}')
+            urls.append(f'https://jsimpsonhttps.pps.eosdis.nasa.gov/imerg/late/{year}{month}/{filename}')
             filenames.append(filename)
         with open(f'{wd}/gpm_imerg/tmp/gpm_list.txt', 'w') as f:
             f.write('\n'.join(urls))
         print(f'Downloading {state.date_nb} files from FTP...')
         done1 = False
         while not done1:
-            p = subprocess.Popen(f'aria2c -x 8 -i {wd}/gpm_imerg/tmp/gpm_list.txt -d {wd}/gpm_imerg/tmp/gpm_data --ftp-user={state.login} --ftp-passwd={state.login} --continue=true'.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            cmd = f'aria2c --http-auth-challenge=true --http-user={state.login} --http-passwd={state.login} -x 8 -i {wd}/gpm_imerg/tmp/gpm_list.txt -d {wd}/gpm_imerg/tmp/gpm_data --continue=true'
+            p = subprocess.Popen(cmd.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             done2 = False
             while not done2:
                 return_code = p.poll()
