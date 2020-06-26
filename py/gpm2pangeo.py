@@ -19,6 +19,7 @@ import json
 # set environment variable GPM_LOGIN
 
 resume_upload = False
+resume_from = None # if not None (e.g. datetime(2002, 2, 20)), upload will be resumed from this date
 dt0 = datetime(2000, 6, 1) # upload from this date (ignored if resume_upload==True)
 dt1 = dt0 + timedelta(days=100) # upload up to this date (excluded)
 wd = '.'
@@ -182,6 +183,12 @@ async def main():
             state = pickle.load(f)
         state.dt1 = dt1
         state.download_done = False
+        state.download_datetimes = []
+        state.download_filenames = []
+        if resume_from is not None:
+            state.dt = resume_from
+            state.download_dt = state.dt
+        state.chunk_time_date_i = int((state.dt - dt0).total_seconds()) // 1800 // state.date_nb
     else:
         state = State(dt0, dt1)
         print('Cleaning in GCS...')
